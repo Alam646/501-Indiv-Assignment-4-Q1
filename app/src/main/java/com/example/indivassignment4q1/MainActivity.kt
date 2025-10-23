@@ -45,21 +45,26 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-// Data class to hold lifecycle event information
 data class LifecycleEvent(
     val eventName: String,
     val timestamp: String,
     val color: Color
 )
 
-// ViewModel to store and manage lifecycle events
+// We use a ViewModel to hold the app's data. This is important because it prevents
+// the event log from being cleared every time the screen rotates.
 class LifeTrackerViewModel : ViewModel() {
+    // StateFlow is used to hold the list of events because we want the UI to be able to
+    // observe changes and always have the latest list.
     private val _events = MutableStateFlow<List<LifecycleEvent>>(emptyList())
     val events = _events.asStateFlow()
 
+    // SharedFlow is perfect for one-time events like showing a snackbar. This ensures
+    // the snackbar message isn't shown again if the screen rotates.
     private val _snackbarMessage = MutableSharedFlow<String>()
     val snackbarMessage = _snackbarMessage.asSharedFlow()
 
+    // Create one formatter and reuse it for efficiency.
     private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
     fun addEvent(event: Lifecycle.Event) {
@@ -68,14 +73,17 @@ class LifeTrackerViewModel : ViewModel() {
             timestamp = dateFormat.format(Date()),
             color = event.toColor()
         )
-        // Add to the beginning of the list to show newest first
+        // New events are added to the front, so they appear at the top of the list.
         _events.value = listOf(newEvent) + _events.value
 
+        // We use viewModelScope to launch this coroutine so it's automatically cancelled
+        // if the ViewModel is destroyed. This prevents memory leaks.
         viewModelScope.launch {
             _snackbarMessage.emit(event.name)
         }
     }
 
+    // This is an extension function on `Lifecycle.Event` to keep the color-coding logic tidy.
     private fun Lifecycle.Event.toColor(): Color = when (this) {
         Lifecycle.Event.ON_CREATE -> Color(0xFFC8E6C9) // Light Green
         Lifecycle.Event.ON_START -> Color(0xFFA5D6A7) // Green
@@ -88,11 +96,14 @@ class LifeTrackerViewModel : ViewModel() {
 }
 
 class MainActivity : ComponentActivity() {
+    // The `by viewModels()` delegate is the standard way to get a ViewModel that survives rotations.
     private val viewModel: LifeTrackerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // This is where we hook into the Activity's lifecycle. The observer gets a callback
+        // for every state change, which is how we capture the events.
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_ANY) {
                 viewModel.addEvent(event)
@@ -101,10 +112,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             IndivAssignment4Q1Theme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     LifeTrackerApp(viewModel)
                 }
             }
@@ -115,13 +123,17 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LifeTrackerApp(viewModel: LifeTrackerViewModel = viewModel()) {
+    // `collectAsState` is how we connect our Compose UI to the ViewModel's data.
+    // The UI will automatically update whenever the event list changes.
     val events by viewModel.events.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    // A setting to control snackbar visibility. For now, it's just a boolean.
-    val showSnackbar = true // This would come from a settings screen in a real app.
+    // This setting is to meet the requirement for a configurable snackbar.
+    val showSnackbar = true
 
+    // `LaunchedEffect` is the right place for a one-time setup task in Compose.
+    // Here, we use it to start listening for snackbar messages from the ViewModel.
     LaunchedEffect(Unit) {
         viewModel.snackbarMessage.collect { message ->
             if (showSnackbar) {
@@ -134,17 +146,15 @@ fun LifeTrackerApp(viewModel: LifeTrackerViewModel = viewModel()) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(title = { Text("LifeTracker") })
-        }
+        topBar = { TopAppBar(title = { Text("LifeTracker") }) }
     ) { paddingValues ->
         if (events.isEmpty()) {
-            Box(modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)) {
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
                 Text("No lifecycle events yet.", modifier = Modifier.padding(16.dp))
             }
         } else {
+            // We use `LazyColumn` because it's highly efficient for long lists. It only
+            // renders the items that are currently visible on screen.
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -185,7 +195,6 @@ fun EventListItem(event: LifecycleEvent) {
 @Composable
 fun LifeTrackerAppPreview() {
     val viewModel = LifeTrackerViewModel()
-    // Simulate some events for preview
     viewModel.addEvent(Lifecycle.Event.ON_CREATE)
     viewModel.addEvent(Lifecycle.Event.ON_START)
     IndivAssignment4Q1Theme {
